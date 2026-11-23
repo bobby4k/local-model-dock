@@ -153,9 +153,23 @@ def start():
             process.wait(timeout=12)
         except subprocess.TimeoutExpired:
             raise RuntimeError(f"{line or 'startup failed'}; cleanup is still pending") from None
+        if line == "Startup failed: supervisor already running":
+            path = private_root() / SOCKET
+            info = path.lstat()
+            if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid():
+                raise ValueError("control path is not an owned socket")
+            with socket.socket(socket.AF_UNIX) as client:
+                client.settimeout(2)
+                client.connect(str(path))
+                client.sendall(b"status\n")
+                response = client.recv(128).decode("ascii").strip()
+            if response.isdecimal() and 1 <= int(response) <= 65535:
+                print(f"Already running. API URL: http://127.0.0.1:{int(response)}/v1")
+                return
         raise RuntimeError(line or "supervisor exited during startup")
     print("Started authenticated gateway; " + ("verified model restored." if line == "READY ENABLED"
                                                else "no verified model is available."))
+    print(f"API URL: http://127.0.0.1:{_port('DOCK_GATEWAY_PORT', '8399')}/v1")
 
 
 def stop():
@@ -286,6 +300,9 @@ def run():
                         request += chunk
                     if request == b"verify\n":
                         client.sendall(b"Verification unavailable: backend and model identity cannot be proven\n")
+                        continue
+                    if request == b"status\n":
+                        client.sendall(f"{gateway_port}\n".encode())
                         continue
                     if request.startswith(b"{") and request.endswith(b"\n") and len(request) <= 4096:
                         try:

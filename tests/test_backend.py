@@ -33,6 +33,7 @@ class BackendTests(unittest.TestCase):
             self.assertEqual(args[0], ["/bin/ollama", "serve"])
             self.assertEqual(kwargs["env"]["OLLAMA_HOST"], "127.0.0.1:12345")
             self.assertEqual(kwargs["env"]["OLLAMA_MODELS"], str(Path(tmp).resolve() / "models"))
+            self.assertEqual(kwargs["env"].get("OLLAMA_CONTEXT_LENGTH"), "32768")
             child = backend.process
             backend.stop()
             self.assertTrue(child.terminated)

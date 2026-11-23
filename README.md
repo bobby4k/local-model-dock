@@ -76,7 +76,7 @@ local-model-dock stop
 local-model-dock restart
 ```
 
-`start` 等待后端监听及网关绑定成功。若提示 `supervisor already running`，说明本项目的服务已经启动，不必再次执行 `start`；需要重启时运行 `local-model-dock restart`，关闭时运行 `local-model-dock stop`。supervisor 持有自己启动的后端子进程；`stop` 通过 `.local-model-dock/control.sock` 请求其退出，不读取 PID 文件，也不向其他进程发信号。`restart` 先停止再启动；未运行时停止或重启会报错。各命令须在同一项目目录执行，运行目录必须由当前用户拥有且权限为 700。异常退出留下的旧 socket 会在持有独占锁后清理；非 socket 文件不会被删除。
+`start` 等待后端监听及网关绑定成功，并输出本机 API 地址；服务已经运行时会输出其实际地址。`restart` 重启后同样输出地址；升级前已运行的旧版 supervisor 可能需要先执行一次 `restart` 才支持重复 `start` 时查询地址。supervisor 持有自己启动的后端子进程；`stop` 通过 `.local-model-dock/control.sock` 请求其退出，不读取 PID 文件，也不向其他进程发信号。`restart` 先停止再启动；未运行时停止或重启会报错。各命令须在同一项目目录执行，运行目录必须由当前用户拥有且权限为 700。异常退出留下的旧 socket 会在持有独占锁后清理；非 socket 文件不会被删除。
 
 Supervisor 是本项目的 Python 模块 `src/local_model_dock/supervisor.py`，使用项目 `.venv` 运行，并非独立安装或开机自启的系统服务。控制 socket、模型和运行记录保存在项目目录下的 `.local-model-dock/`。
 

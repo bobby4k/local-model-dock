@@ -74,7 +74,10 @@ class LifecycleTests(unittest.TestCase):
         start = self.command("start")
         self.assertEqual(start.returncode, 0, start.stderr)
         self.assertIn("no verified model", start.stdout.lower())
-        self.assertNotEqual(self.command("start").returncode, 0)
+        self.assertIn(f"http://127.0.0.1:{self.port}/v1", start.stdout)
+        duplicate = self.command("start", {**self.env, "DOCK_GATEWAY_PORT": str(free_port())})
+        self.assertEqual(duplicate.returncode, 0, duplicate.stderr)
+        self.assertIn(f"http://127.0.0.1:{self.port}/v1", duplicate.stdout)
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
         conn.request("GET", "/v1/models")
         self.assertEqual(conn.getresponse().status, 401)
@@ -88,6 +91,7 @@ class LifecycleTests(unittest.TestCase):
         conn.close()
         restarted = self.command("restart")
         self.assertEqual(restarted.returncode, 0, restarted.stderr)
+        self.assertIn(f"http://127.0.0.1:{self.port}/v1", restarted.stdout)
         stopped = self.command("stop")
         self.assertEqual(stopped.returncode, 0, stopped.stderr)
         with self.assertRaises(OSError):
@@ -135,7 +139,8 @@ class LifecycleTests(unittest.TestCase):
     def test_concurrent_starts_allow_only_one_supervisor(self):
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(lambda _: self.command("start"), range(2)))
-        self.assertEqual(sorted(result.returncode for result in results), [0, 1])
+        self.assertTrue(all(result.returncode in (0, 1) for result in results))
+        self.assertEqual(sum("Started authenticated gateway" in result.stdout for result in results), 1)
         self.assertEqual(self.command("stop").returncode, 0)
 
     def test_occupied_backend_port_fails_without_touching_listener(self):

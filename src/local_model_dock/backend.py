@@ -45,7 +45,7 @@ class Backend:
         if self.kind == "ollama":
             env.update(OLLAMA_HOST=f"127.0.0.1:{self.port}",
                        OLLAMA_MODELS=str(self.root / "models"), OLLAMA_NO_CLOUD="1",
-                       OLLAMA_NOPRUNE="1")
+                       OLLAMA_NOPRUNE="1", OLLAMA_CONTEXT_LENGTH="32768")
             command = [executable, "serve"]
         else:
             command = [executable, "serve", "--host", "127.0.0.1",
