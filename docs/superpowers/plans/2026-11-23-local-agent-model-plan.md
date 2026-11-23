@@ -1,82 +1,97 @@
-# Agent Model Dock 项目计划（讨论草案）
+# Local Model Dock Implementation Plan
 
-> 本文用于下一次 session 的讨论和实施准备，不代表所有技术决策已获批准；本仓库当前不包含产品代码。
+> **For agentic workers:** Use `executing-plans` to implement the tasks in order. Checkboxes track progress; never claim unimplemented features work.
 
-## 目标
+**Goal:** Safely discover, validate, run and update hardware-compatible MoE models for local-network Agent use.
 
-自动检测本机硬件，从线上模型库选择并运行适合基础编码、数学、历史和社会科学简单问答的小模型，为 Agent 提供 OpenAI 兼容的本地 API。支持 macOS 和 Linux。
+**Architecture:** A Python CLI manages isolated backend processes, persistent candidate/active/rollback state, and a guarded OpenAI-compatible gateway. Discovery and decision logic are separate from backend-specific operations, with conservative handling of unknowns and confirmation-bound updates.
 
-## 已确认需求
+**Tech Stack:** Python 3.11+, oMLX on Apple Silicon, Ollama on Linux, Hugging Face Hub and Ollama model sources.
 
-- 自动检测运行项目的机器配置，不能为特定机器写死模型。
-- 根据硬件推荐模型，并展示选择结果；首次下载默认需要用户确认。可配置项目管理的模型与运行文件总磁盘占用范围，满足条件时首次下载可自动进行。
-- 支持周期性重新检查线上模型并推荐更新；更新必须通知用户并获得确认，然后才能下载、验证和切换。没有确认、通知失败或验证失败均不得切换。
-- 更新后保留最近一个旧模型供回退。空间限制考虑新旧模型并存及下载临时文件；不能为了更新先删除唯一的回退版本。
-- Telegram 通知和确认可选；不配置 Telegram 时项目仍可启动并通过本地交互完成首次下载。
-- Apple Silicon Mac 直接采用 oMLX，包括其可用的缓存优化；Linux 使用 Ollama。面向 Agent 提供 OpenAI 兼容接口。
+**Spec:** `docs/superpowers/specs/2026-11-23-agent-model-dock-design.md`.
 
-## 设计建议（下个 session 确认）
+## Global Constraints
 
-- 主体使用 Python，尽量利用标准库；仅在确有必要时使用简短 Bash 启动或安装脚本。用户尚未明确确认语言。
-- 默认仅监听 `127.0.0.1`，不对外开放推理服务。API 要验证普通对话、流式输出及工具调用；兼容 OpenAI 的子集不等于支持所有 Agent。
-- Mac 使用 oMLX 支持的 MLX 模型来源（优先确认 Hugging Face 模型仓库及其元数据）；Linux 使用 Ollama 模型库。通过维护的候选清单及已验证元数据筛选，避免仅依据下载量或模型名字自动判定质量。模型来源、许可证及可用性在实施时核实。
-- 可用内存、GPU、模型权重、上下文长度、KV 缓存及系统余量共同影响可运行性；磁盘预算与运行内存分开计算。检测不可靠或元数据不足时停止自动下载并提示用户。
-- 首次自动下载仅在配置的预算与实际剩余磁盘空间均满足要求时允许；未设预算时须确认。预算包含项目管理的当前模型、保留的旧模型、候选模型、临时下载和 SSD 缓存；保守估算，无法可靠估算则人工确认，且不得突破硬性预算。
-- SSD 缓存设容量上限、私有文件权限，并告知用户可能包含对话内容。仅使用选定 oMLX 版本实际支持的特性；不承诺固定性能提升。
-- 模型更新以版本或不可变标识记录当前版本、候选和上一个版本；验证通过后再原子切换。考虑 Agent 配置引用的模型名称，不能假设不同后端自带稳定别名，需确定并测试兼容方案。
-- Telegram Bot Token 不写入仓库或日志；限定可确认的用户和聊天，确认应绑定单次候选及有效期，防重放。定时任务不依赖终端常驻交互。
-- 不删除非本项目管理的模型或文件，不自动安装系统组件、不改变防火墙；安装方式、服务管理及必要授权由实施方案明确。
+- Apple Silicon and Linux only; no Intel Mac. `.env` budget defaults to 20 GB as a warning threshold.
+- MoE only; formal recommendations require trusted tool-call validation bound to exact model and backend versions.
+- DeepSeek and Qwen priority configurable; other families are fallback. Unknown resource or architecture data is not treated as adequate.
+- `start`, `update`, `stop`, `restart` required. First-download auto mode defaults on but stops for uncertain resources or anticipated budget excess.
+- Updates require notification and specific confirmation before download; current and most recent previous model remain available through download and verification.
+- Telegram token and authorized user/chat IDs are optional `.env` settings. Local confirmation works without Telegram.
+- Network-facing gateway requires authentication; backend ports must not bypass it. Do not expose secrets in logs, Git, or examples.
+- Do not delete files outside project management; do not install system dependencies or modify firewall or cron.
 
-## 实施阶段与验收
+## Review Focus
 
-### 1. 技术预研与设计冻结
+- Unauthorized or malformed gateway requests cannot access backend or disclose credentials (Task 5).
+- Interrupted or repeated updates must retain the active model and reject stale approval (Task 6).
+- Unreliable size or hardware metadata cannot trigger unattended download (Tasks 2–3).
+- Running streams must not be interrupted by a model switch when backend permits draining (Tasks 5–6).
+- Shared backend files and budget accounting cannot cause deletion of unmanaged data (Tasks 3–4).
 
-- [ ] 确认 Python 版本、oMLX / Ollama 支持的平台、安装方法、模型来源与许可证、版本固定及 OpenAI 接口能力，记录官方来源。
-- [ ] 明确 Intel Mac 支持策略；不能假定 oMLX 支持 Intel。明确 Linux CPU、NVIDIA、AMD 等硬件的支持范围与降级行为。
-- [ ] 在目标模型和后端上验证工具调用、模型标识、缓存配置、磁盘占用的可观测性及安全回退机制。
-- [ ] 确定硬件检测方式、候选清单更新机制、磁盘预算边界、通知机制及调度方式；对无法可靠实现的自动化向用户提出替代方案。
+## File Structure
 
-### 2. 硬件检测与模型选择
+- `pyproject.toml`, `src/local_model_dock/__main__.py`, `cli.py`, `config.py`: package, commands and configuration.
+- `src/local_model_dock/hardware.py`, `discovery.py`, `selection.py`: platform detection, online metadata and policy.
+- `src/local_model_dock/backend.py`, `storage.py`: isolated backend lifecycle, versioned model files and storage accounting.
+- `src/local_model_dock/gateway.py`: authenticated API forwarding and stable model name.
+- `src/local_model_dock/updates.py`, `telegram.py`: persistent approvals, update and optional notifications.
+- `tests/`: tests for each module and integration flows.
+- `README.md`, `.env.example`, `.gitignore`: operating instructions and safe configuration.
 
-- [ ] 为 Apple Silicon、Linux CPU 及经确认支持的 GPU 实现检测；提供明确的未知值和不支持提示。
-- [ ] 基于已验证的模型清单、资源需求和实际可用空间进行保守选择；展示型号、来源、许可证、估计磁盘和内存需求及限制。
-- [ ] 测试内存不足、空间不足、GPU 信息缺失、无兼容模型、元数据缺失和网络失败；自动化不得将未知值视作足够。
+### Task 1: Package, configuration and command contract
 
-### 3. 首次下载与推理服务
+**Files:** create package, `pyproject.toml`, `.gitignore`, `.env.example`, and `tests/test_cli.py`, `tests/test_config.py`.
 
-- [ ] 实现交互确认、可配置空间预算和安全下载；中断时维持现有数据，清理仅由本次任务创建的临时文件。
-- [ ] 接入 oMLX 和 Ollama；默认本机监听，验证本地 OpenAI 兼容对话、流式输出及工具调用。
-- [ ] 为 Apple Silicon 配置并验证 oMLX 可用的前缀/KV 缓存；将 SSD 缓存纳入磁盘限制，记录实际使用。
-- [ ] 用编码、数学和知识问答的简短样例做烟雾测试，并记录局限；不将小模型当作事实权威。
+- [ ] Write failing tests that CLI recognizes `start`, `update`, `stop`, `restart`, refuses unsupported operations safely, and parses `.env` defaults (20 GB, automatic first download enabled, Telegram disabled without token).
+- [ ] Run `python3 -m unittest discover -s tests -v`; verify tests fail for missing package.
+- [ ] Implement config parsing without printing secrets, platform-neutral CLI entry point, and safe explicit errors for lifecycle operations not yet implemented. Add `.env` and runtime data to `.gitignore`.
+- [ ] Run the test suite and verify all Task 1 tests pass; confirm no secrets are present in tracked files.
 
-### 4. 周期检查、确认与回退
+### Task 2: Hardware and selection policy
 
-- [ ] 实现可配置周期的检查及候选持久化；检查本身不得下载或切换更新模型。
-- [ ] 可选配置 Telegram，向指定用户展示候选、原因及空间需求；仅处理获授权、未过期且匹配当前候选的确认。
-- [ ] 确认后重新检查预算和可用空间，下载候选并验证；失败、中断或重启恢复后继续使用当前模型。
-- [ ] 切换后保留最近一个旧模型；测试手动回退、空间不足、新旧版本相同、重复确认及多个并发更新。
-- [ ] 不配置 Telegram 时记录候选但不自动更新；本地首次安装不受影响。
+**Files:** `hardware.py`, `selection.py`, tests for both.
 
-### 5. 文档和端到端验收
+- [ ] Write failing tests for Apple Silicon, Intel Mac rejection, Linux unknown GPU, memory unknown, MoE false/unknown, insufficient disk, verified tool calls, family fallback, priority ordering and warning threshold.
+- [ ] Implement detection and deterministic selection, separating verified recommendations from untested discoveries; only automatic-download verified candidates with known adequate resources within budget.
+- [ ] Run tests and verify unsupported and unknown cases fail closed.
 
-- [ ] 编写 macOS / Linux 的依赖、安装、配置、启动、Agent 接入、备份回退、故障排查和卸载说明。
-- [ ] 使用模拟后端测试正常及失败路径；在实际 Apple Silicon 和支持的 Linux 硬件上分别进行验证，记录未覆盖的平台。
-- [ ] 验证服务默认只允许本机访问、密钥不进入日志及版本控制、磁盘限制与旧模型保留策略生效。
+### Task 3: Online discovery and version metadata
 
-## 下一次 session 必须确认的问题
+**Files:** `discovery.py`, `tests/test_discovery.py`.
 
-1. 是否采用 Python 主体；最低 Python 版本和依赖管理方式是什么？
-2. Intel Mac 是明确不支持，还是使用 Ollama 回退？
-3. 磁盘预算的默认值、所用目录和预算不足时的精确交互是什么？不可可靠估算时是否允许用户覆盖硬限制？
-4. 不配置 Telegram 时，是否需要增加本地命令确认周期更新？当前需求只明确不得自动更新。
-5. 是否要求远程 Agent 访问？如有，需要单独设计身份验证、TLS 和网络暴露。
-6. 模型品质、速度、上下文及工具调用的验收门槛是什么？定期推荐由谁维护候选清单及评分？
-7. 更新切换时如何稳定 Agent 所用模型名，及正在运行的请求如何处理？
+- [ ] Mock paginated Hub responses, failed requests, missing architecture, quantization/file sizes, licenses and immutable revisions; assert unknowns never become verified facts.
+- [ ] Implement read-only discovery of new MoE candidates and version identifiers; use source-specific APIs and label metadata of uncertain provenance. Verify Ollama registry discovery mechanism before relying on it.
+- [ ] Run tests; document upstream limitations and do not claim discovery is complete if registry metadata is insufficient.
 
-## 参考资料
+### Task 4: Isolated backends and storage
 
-- [oMLX 项目](https://github.com/jundot/omlx)
-- [Ollama OpenAI 兼容接口](https://docs.ollama.com/api/openai-compatibility)
-- [Ollama 工具调用](https://docs.ollama.com/capabilities/tool-calling)
+**Files:** `backend.py`, `storage.py`, corresponding tests.
 
-上述资料的当前版本和实际硬件兼容性尚未在本项目验证。
+- [ ] Test isolated model paths, missing dependencies, process ownership, safe start/stop/restart, caching configuration, model size plus temporary files, over-budget notifications and no deletion of external files.
+- [ ] Implement Apple Silicon oMLX and Linux Ollama adapters; keep each backend loopback-only, use project-managed paths, configure capped oMLX SSD cache, and retain immutable model revisions.
+- [ ] Verify backend lifecycle using mocked processes; test real backend operations only where dependencies and hardware are available.
+
+### Task 5: Authenticated stable gateway
+
+**Files:** `gateway.py`, `tests/test_gateway.py`.
+
+- [ ] Test missing/wrong/correct API key, non-loopback backend bypass prevention, normal and streamed completions, tool-call forwarding, stable model mapping, and active-stream draining.
+- [ ] Implement an authenticated LAN gateway; keep backend private, stream transparently and never log authorization or content.
+- [ ] Run tests and a local end-to-end check. Document that HTTP is unencrypted and LAN exposure depends on firewall/network configuration.
+
+### Task 6: Approval, update and rollback
+
+**Files:** `updates.py`, `telegram.py`, tests for both.
+
+- [ ] Test pending candidate persistence, notification failure, local confirmation without Telegram, unauthorized Telegram users/chats, expiration, replay, duplicate/concurrent updates, inadequate disk, download/test failure, restart recovery and rollback preservation.
+- [ ] Implement candidate-bound one-use approvals, optional Telegram with allowlisted IDs, and a crash-safe update state machine. `update` checks and reports before any download; explicit approval triggers download and validation.
+- [ ] Run tests with fake sources and backends; verify old active service remains available through failed operations.
+
+### Task 7: Documentation and end-to-end verification
+
+**Files:** `README.md`, `.env.example`, integration tests.
+
+- [ ] Document commands, service prerequisites, cron example, `.env` settings, security, verified model limitations, manual confirmation, rollback and uninstall.
+- [ ] Run full tests, check source for secrets, verify local gateway and CLI; perform real Apple Silicon and Linux smoke tests only on available systems.
+- [ ] Record untested combinations and actual results; commit and push only after verification and review of the diff.
