@@ -15,19 +15,29 @@ from .validation import validate_tool_call
 
 from .process_identity import process_owns_loopback_port
 
+OLLAMA_MODEL = "deepseek-v4-pro-qwen3.5-9b-uncensored:q4_k_m"
+OLLAMA_MODELS = (OLLAMA_MODEL, "local-dock-initial")
 
-def _ollama_layer(root, name):
-    """Hash the single model layer of a local, unqualified Ollama model."""
-    if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._-]*", name):
+
+def _ollama_parts(name):
+    if not isinstance(name, str) or not re.fullmatch(
+            r"[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)?", name):
         raise ValueError("invalid Ollama model name")
+    parts = name.split(":")
+    return parts[0], parts[1] if len(parts) == 2 else "latest"
+
+
+def _ollama_layer(root, name, cache=None):
+    """Hash the single model layer of a local, unqualified Ollama model."""
+    model, tag = _ollama_parts(name)
     models = Path(root) / "models"
-    manifest_dir = models / "manifests-v2" / "ollama.com" / "library" / name
+    manifest_dir = models / "manifests-v2" / "ollama.com" / "library" / model
     for path in (models, models / "manifests-v2", models / "manifests-v2" / "ollama.com",
                  models / "manifests-v2" / "ollama.com" / "library", manifest_dir,
                  models / "blobs"):
         if path.is_symlink() or not path.is_dir():
             raise ValueError("invalid Ollama model directory")
-    manifest_path = manifest_dir / "latest"
+    manifest_path = manifest_dir / tag
     manifest_digest = None
     if manifest_path.is_symlink():
         target = manifest_path.resolve(strict=True)
@@ -60,7 +70,24 @@ def _ollama_layer(root, name):
         if blob.is_symlink() or not blob.is_file() or blob.stat().st_size != size:
             raise ValueError("invalid Ollama layer blob")
         with blob.open("rb") as stream:
-            actual = hashlib.file_digest(stream, "sha256").hexdigest()
+            before = os.fstat(stream.fileno())
+            identity = (before.st_dev, before.st_ino, before.st_size,
+                        before.st_mtime_ns, before.st_ctime_ns)
+            entry = cache.get(str(blob)) if cache is not None else None
+            now = time.monotonic()
+            # shortcut: unchanged metadata reuses a digest for 30 seconds; rehash for stronger detection.
+            if entry and entry[0] == identity and now < entry[1]:
+                actual = entry[2]
+            else:
+                actual = hashlib.file_digest(stream, "sha256").hexdigest()
+                after = os.fstat(stream.fileno())
+                if identity != (after.st_dev, after.st_ino, after.st_size,
+                                after.st_mtime_ns, after.st_ctime_ns):
+                    raise ValueError("Ollama layer changed during verification")
+                if cache is not None and actual == digest[7:]:
+                    if len(cache) >= 64:
+                        cache.clear()
+                    cache[str(blob)] = (identity, now + 30, actual)
         if actual != digest[7:]:
             raise ValueError("Ollama layer digest mismatch")
     return model_layers[0]["digest"][7:], model_layers[0]["size"]
@@ -93,9 +120,9 @@ def _post(port, path, payload, limit=1_000_000):
         conn.close()
 
 
-def _identity(backend, name):
+def _identity(backend, name, cache=None):
     if backend.kind == "ollama":
-        return _ollama_identity(backend, name)
+        return _ollama_identity(backend, name, cache)
     if (not isinstance(name, str) or not name or name in (".", "..")
             or "/" in name or "\\" in name or "\0" in name or backend.kind != "omlx"):
         raise ValueError("unsupported model or backend")
@@ -134,12 +161,12 @@ def _identity(backend, name):
             "backend_version": version, "binary": str(executable), "binary_sha256": binary_hash}
 
 
-def _ollama_identity(backend, name):
+def _ollama_identity(backend, name, cache=None):
     # Fixed HF tree revision c6453f674da4d30f5737092d9371114cae3ca063, Q4_K_M LFS entry.
     repo = "mradermacher/DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic-i1-GGUF"
     revision = "c6453f674da4d30f5737092d9371114cae3ca063"
     digest = "de3fea7a12b793a573df636eb1c16da3f7960af0377f79e04bfc04a8e65dfb4c"
-    if name != "local-dock-initial":
+    if name not in OLLAMA_MODELS:
         raise ValueError("Ollama model is not the authorized fallback")
     process = backend.process
     if process is None or process.poll() is not None or not process_owns_loopback_port(process, backend.port):
@@ -158,9 +185,10 @@ def _ollama_identity(backend, name):
     output = subprocess.run([str(executable), "--version"], stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, timeout=10, check=True, env=env).stdout.decode().strip()
     match = re.fullmatch(r"ollama version is ([0-9][0-9A-Za-z.+_-]*)", output)
-    if not match or _ollama_layer(backend.root, name) != (digest, 5780093088):
+    if not match or _ollama_layer(backend.root, name, cache) != (digest, 5780093088):
         raise ValueError("Ollama version or model digest mismatch")
-    manifest = backend.root / "models" / "manifests-v2" / "ollama.com" / "library" / name / "latest"
+    model, tag = _ollama_parts(name)
+    manifest = backend.root / "models" / "manifests-v2" / "ollama.com" / "library" / model / tag
     manifest_hash = hashlib.sha256(manifest.read_bytes()).hexdigest()
     show = _ollama_show(backend.port, name)
     info, details = show["model_info"], show["details"]
@@ -229,10 +257,10 @@ def verify_model(backend, name):
         return False
 
 
-def checked_identity(backend, name):
+def checked_identity(backend, name, cache=None):
     """Return the validated public identity, or None if any evidence is stale."""
     try:
-        identity = _identity(backend, name)
+        identity = _identity(backend, name, cache)
         records = backend.root / "records"
         if records.is_symlink() or not records.is_dir() or records.stat().st_mode & 0o077:
             return None
@@ -247,5 +275,5 @@ def checked_identity(backend, name):
         return None
 
 
-def check_record(backend, name):
-    return checked_identity(backend, name) is not None
+def check_record(backend, name, cache=None):
+    return checked_identity(backend, name, cache) is not None

@@ -48,8 +48,9 @@ def main() -> int:
     if args.activate and not (args.install or args.verify):
         parser.error("--activate requires --install or --verify")
     if args.verify or args.enable:
+        from .probe_records import OLLAMA_MODELS
         model = args.verify or args.enable
-        if model == "local-dock-initial":
+        if model in OLLAMA_MODELS:
             try:
                 if args.verify:
                     _control("verify", model)

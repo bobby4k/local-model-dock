@@ -69,6 +69,21 @@ class OllamaProbeTests(unittest.TestCase):
     @patch("local_model_dock.probe_records._ollama_layer")
     @patch("local_model_dock.probe_records._ollama_show")
     @patch("local_model_dock.probe_records._request")
+    def test_tagged_model_probe_creates_valid_record(self, request, show, layer, owns):
+        name = "deepseek-v4-pro-qwen3.5-9b-uncensored:q4_k_m"
+        model_dir = self.root / "models" / "manifests-v2" / "ollama.com" / "library" / name.split(":")[0]
+        model_dir.mkdir()
+        (model_dir / "q4_k_m").write_text('{"layers":[]}')
+        request.return_value = {**self.response, "model": name}
+        show.return_value = self.show
+        layer.return_value = (self.digest, 5780093088)
+        self.assertTrue(verify_model(self.backend, name))
+        self.assertTrue(check_record(self.backend, name))
+
+    @patch("local_model_dock.probe_records.process_owns_loopback_port", return_value=True)
+    @patch("local_model_dock.probe_records._ollama_layer")
+    @patch("local_model_dock.probe_records._ollama_show")
+    @patch("local_model_dock.probe_records._request")
     def test_probe_record_is_bound_to_model_and_backend(self, request, show, layer, owns):
         request.return_value = self.response
         show.return_value = self.show

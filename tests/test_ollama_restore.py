@@ -10,6 +10,13 @@ from local_model_dock.supervisor import ModelState, load_enabled, save_enabled
 
 
 class RestoreTests(unittest.TestCase):
+    def test_tagged_model_selection_survives_restart(self):
+        model = "deepseek-v4-pro-qwen3.5-9b-uncensored:q4_k_m"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            save_enabled(root, model)
+            self.assertEqual(load_enabled(root), model)
+
     def test_start_reports_restored_model_accurately(self):
         from local_model_dock.supervisor import start
         process = Mock()

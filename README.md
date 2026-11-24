@@ -58,12 +58,12 @@ local-model-dock update --install owner/model
 local-model-dock update --install owner/model --activate
 ```
 
-目前 Ollama 验证和启用仅针对本机已导入的 `local-dock-initial` 固定模型和版本，不支持任意下载的模型。supervisor 必须运行；验证会执行真实工具调用：
+目前 Ollama 验证和启用仅针对固定来源和版本的模型，不支持任意下载的模型。模型 ID 使用模型名称和量化标签，启用状态保存在私有运行目录中，重启后仍会重新检查验证记录。supervisor 必须运行；验证会执行真实工具调用：
 
 ```bash
-local-model-dock update --verify local-dock-initial
-local-model-dock update --verify local-dock-initial --activate
-local-model-dock update --enable local-dock-initial
+local-model-dock update --verify deepseek-v4-pro-qwen3.5-9b-uncensored:q4_k_m
+local-model-dock update --verify deepseek-v4-pro-qwen3.5-9b-uncensored:q4_k_m --activate
+local-model-dock update --enable deepseek-v4-pro-qwen3.5-9b-uncensored:q4_k_m
 ```
 
 这些命令不会下载模型。验证或复核失败不会启用；已启用的固定模型在重启后通过复核可自动恢复。修改回退 URL 或量化设置不会自动下载、导入或替换当前模型。

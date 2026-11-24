@@ -20,7 +20,7 @@ from .backend import Backend, BackendError
 from .config import load_config
 from .gateway import create_gateway
 from .hardware import detect_backend
-from .probe_records import check_record, checked_identity, verify_model
+from .probe_records import OLLAMA_MODELS, check_record, checked_identity, verify_model
 
 
 ROOT = Path(".local-model-dock")
@@ -32,6 +32,8 @@ class ModelState:
         self.backend = backend
         self.persist = persist
         self.lock = threading.Lock()
+        self.validation_lock = threading.Lock()
+        self.hash_cache = {}
         self.model = None
         self.active = 0
         self.busy = False
@@ -44,7 +46,9 @@ class ModelState:
             if acquired:
                 self.active += 1
         try:
-            if model is not None and not check_record(self.backend, model):
+            with self.validation_lock:
+                valid = model is None or check_record(self.backend, model, self.hash_cache)
+            if not valid:
                 with self.lock:
                     if self.model == model:
                         self.model = None
@@ -66,6 +70,8 @@ class ModelState:
             if self.busy or (action in ("verify", "enable", "stop") and self.active):
                 return False
             self.busy = True
+            if action in ("verify", "enable", "stop"):
+                self.hash_cache.clear()
             if action in ("verify", "stop"):
                 self.model = None
             return True
@@ -95,7 +101,7 @@ def load_enabled(root):
                 or info.st_mode & 0o077 or info.st_size > 128):
             return None
         value = path.read_text()
-        return value if value == "local-dock-initial" else None
+        return value if value in OLLAMA_MODELS else None
     except (OSError, UnicodeError):
         return None
 
@@ -108,7 +114,7 @@ def save_enabled(root, model):
         except FileNotFoundError:
             pass
         return
-    if model != "local-dock-initial":
+    if model not in OLLAMA_MODELS:
         raise ValueError("unsupported persistent model")
     fd, temporary = tempfile.mkstemp(prefix=".enabled-", dir=root)
     try:
@@ -249,7 +255,7 @@ def run():
                 probe.bind((host, backend_port))
         backend = Backend(detect_backend(), root, port=backend_port)
         state = ModelState(backend, persist=lambda model: save_enabled(
-            root, model if model == "local-dock-initial" else None))
+            root, model if model in OLLAMA_MODELS else None))
         gateway = create_gateway(("0.0.0.0", gateway_port),
                                  f"http://127.0.0.1:{backend_port}", config.api_key,
                                  "local-model", lambda: None, model_session=state.request)
