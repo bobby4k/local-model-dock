@@ -28,12 +28,13 @@ SOCKET = "control.sock"
 
 
 class ModelState:
-    def __init__(self, backend, persist=None):
+    def __init__(self, backend, persist=None, hash_cache_ttl=86400):
         self.backend = backend
         self.persist = persist
         self.lock = threading.Lock()
         self.validation_lock = threading.Lock()
         self.hash_cache = {}
+        self.hash_cache_ttl = hash_cache_ttl
         self.model = None
         self.active = 0
         self.busy = False
@@ -47,7 +48,7 @@ class ModelState:
                 self.active += 1
         try:
             with self.validation_lock:
-                valid = model is None or check_record(self.backend, model, self.hash_cache)
+                valid = model is None or check_record(self.backend, model, self.hash_cache, self.hash_cache_ttl)
             if not valid:
                 with self.lock:
                     if self.model == model:
@@ -255,7 +256,8 @@ def run():
                 probe.bind((host, backend_port))
         backend = Backend(detect_backend(), root, port=backend_port)
         state = ModelState(backend, persist=lambda model: save_enabled(
-            root, model if model in OLLAMA_MODELS else None))
+            root, model if model in OLLAMA_MODELS else None),
+            hash_cache_ttl=config.ollama_hash_cache_ttl_seconds)
         gateway = create_gateway(("0.0.0.0", gateway_port),
                                  f"http://127.0.0.1:{backend_port}", config.api_key,
                                  "local-model", lambda: None, model_session=state.request)

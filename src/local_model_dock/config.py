@@ -18,6 +18,7 @@ class Config:
     telegram_chat_id: str
     fallback_url: str = DEFAULT_FALLBACK_URL
     fallback_quantization: str = "i1-Q4_K_M"
+    ollama_hash_cache_ttl_seconds: int = 86400
 
     @property
     def fallback_repo(self) -> str:
@@ -53,9 +54,12 @@ def load_config(path: Path = Path(".env"), environ: Mapping[str, str] | None = N
     quantization = values.get("FALLBACK_QUANTIZATION", "i1-Q4_K_M")
     if not re.fullmatch(r"(?:i[1-8]-)?[iq][1-8](?:_[a-z0-9]+)*", quantization, re.I):
         raise ValueError("Invalid FALLBACK_QUANTIZATION")
+    ttl = values.get("OLLAMA_HASH_CACHE_TTL_SECONDS", "86400")
+    if not re.fullmatch(r"[0-9]+", ttl) or len(ttl) > 300:
+        raise ValueError("OLLAMA_HASH_CACHE_TTL_SECONDS must be a non-negative integer")
     config = Config(budget, auto == "true", families, values.get("API_KEY", ""),
                    values.get("TELEGRAM_BOT_TOKEN", ""), values.get("TELEGRAM_USER_ID", ""),
                    values.get("TELEGRAM_CHAT_ID", ""),
-                   values.get("FALLBACK_MODEL_URL", DEFAULT_FALLBACK_URL), quantization)
+                    values.get("FALLBACK_MODEL_URL", DEFAULT_FALLBACK_URL), quantization, int(ttl))
     config.fallback_repo
     return config

@@ -27,7 +27,7 @@ def _ollama_parts(name):
     return parts[0], parts[1] if len(parts) == 2 else "latest"
 
 
-def _ollama_layer(root, name, cache=None):
+def _ollama_layer(root, name, cache=None, cache_ttl=86400):
     """Hash the single model layer of a local, unqualified Ollama model."""
     model, tag = _ollama_parts(name)
     models = Path(root) / "models"
@@ -75,7 +75,7 @@ def _ollama_layer(root, name, cache=None):
                         before.st_mtime_ns, before.st_ctime_ns)
             entry = cache.get(str(blob)) if cache is not None else None
             now = time.monotonic()
-            # shortcut: unchanged metadata reuses a digest for 30 seconds; rehash for stronger detection.
+            # shortcut: unchanged metadata reuses the digest until expiry; set TTL to zero for stronger detection.
             if entry and entry[0] == identity and now < entry[1]:
                 actual = entry[2]
             else:
@@ -87,7 +87,7 @@ def _ollama_layer(root, name, cache=None):
                 if cache is not None and actual == digest[7:]:
                     if len(cache) >= 64:
                         cache.clear()
-                    cache[str(blob)] = (identity, now + 30, actual)
+                    cache[str(blob)] = (identity, now + cache_ttl, actual)
         if actual != digest[7:]:
             raise ValueError("Ollama layer digest mismatch")
     return model_layers[0]["digest"][7:], model_layers[0]["size"]
@@ -120,9 +120,9 @@ def _post(port, path, payload, limit=1_000_000):
         conn.close()
 
 
-def _identity(backend, name, cache=None):
+def _identity(backend, name, cache=None, cache_ttl=86400):
     if backend.kind == "ollama":
-        return _ollama_identity(backend, name, cache)
+        return _ollama_identity(backend, name, cache, cache_ttl)
     if (not isinstance(name, str) or not name or name in (".", "..")
             or "/" in name or "\\" in name or "\0" in name or backend.kind != "omlx"):
         raise ValueError("unsupported model or backend")
@@ -161,7 +161,7 @@ def _identity(backend, name, cache=None):
             "backend_version": version, "binary": str(executable), "binary_sha256": binary_hash}
 
 
-def _ollama_identity(backend, name, cache=None):
+def _ollama_identity(backend, name, cache=None, cache_ttl=86400):
     # Fixed HF tree revision c6453f674da4d30f5737092d9371114cae3ca063, Q4_K_M LFS entry.
     repo = "mradermacher/DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic-i1-GGUF"
     revision = "c6453f674da4d30f5737092d9371114cae3ca063"
@@ -185,7 +185,7 @@ def _ollama_identity(backend, name, cache=None):
     output = subprocess.run([str(executable), "--version"], stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, timeout=10, check=True, env=env).stdout.decode().strip()
     match = re.fullmatch(r"ollama version is ([0-9][0-9A-Za-z.+_-]*)", output)
-    if not match or _ollama_layer(backend.root, name, cache) != (digest, 5780093088):
+    if not match or _ollama_layer(backend.root, name, cache, cache_ttl) != (digest, 5780093088):
         raise ValueError("Ollama version or model digest mismatch")
     model, tag = _ollama_parts(name)
     manifest = backend.root / "models" / "manifests-v2" / "ollama.com" / "library" / model / tag
@@ -257,10 +257,10 @@ def verify_model(backend, name):
         return False
 
 
-def checked_identity(backend, name, cache=None):
+def checked_identity(backend, name, cache=None, cache_ttl=86400):
     """Return the validated public identity, or None if any evidence is stale."""
     try:
-        identity = _identity(backend, name, cache)
+        identity = _identity(backend, name, cache, cache_ttl)
         records = backend.root / "records"
         if records.is_symlink() or not records.is_dir() or records.stat().st_mode & 0o077:
             return None
@@ -275,5 +275,5 @@ def checked_identity(backend, name, cache=None):
         return None
 
 
-def check_record(backend, name, cache=None):
-    return checked_identity(backend, name, cache) is not None
+def check_record(backend, name, cache=None, cache_ttl=86400):
+    return checked_identity(backend, name, cache, cache_ttl) is not None

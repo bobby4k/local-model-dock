@@ -98,7 +98,7 @@ python -c 'from local_model_dock.config import load_config; import urllib.reques
 cp -n .env.example .env
 ```
 
-配置读取模块支持以下字段；下载预算和家族顺序用于 `update`，`API_KEY` 用于网关，其余功能尚未接入生命周期命令。环境变量在读取时优先于 `.env`。
+配置读取模块支持以下字段；下载预算和家族顺序用于 `update`，`API_KEY` 和摘要缓存时间用于网关。环境变量在读取时优先于 `.env`。
 
 | 字段 | 默认值 | 规划用途 |
 | --- | --- | --- |
@@ -108,11 +108,12 @@ cp -n .env.example .env
 | `FALLBACK_MODEL_URL` | Hugging Face 回退模型地址 | 可配置回退目标；自动回退尚未接入 |
 | `FALLBACK_QUANTIZATION` | 回退 GGUF 量化版本 | 默认 `i1-Q4_K_M`；可在 `.env` 中修改，缺失或不唯一时明确报错 |
 | `API_KEY` | 空 | 网关访问密钥；启动必填 |
+| `OLLAMA_HASH_CACHE_TTL_SECONDS` | `86400` | Ollama 模型摘要缓存时间（秒，非负整数）；`0` 表示每次重新计算，重启后生效 |
 | `TELEGRAM_BOT_TOKEN` | 空 | 可选的 Telegram Bot Token |
 | `TELEGRAM_USER_ID` | 空 | 允许确认的 Telegram 用户 ID |
 | `TELEGRAM_CHAT_ID` | 空 | 允许确认的 Telegram 聊天 ID |
 
-不要将真实密钥提交到仓库；`.env` 已列入 `.gitignore`。Telegram 授权目前未实现。
+缓存期间文件元数据变化会触发重新计算；未被元数据检测到的修改可能延迟到缓存过期后的下一次请求才被发现。不要将真实密钥提交到仓库；`.env` 已列入 `.gitignore`。Telegram 授权目前未实现。
 
 ## 运行测试
 

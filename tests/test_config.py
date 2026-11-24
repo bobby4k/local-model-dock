@@ -6,6 +6,17 @@ from local_model_dock.config import load_config
 
 
 class ConfigTests(unittest.TestCase):
+    def test_hash_cache_ttl_from_file_environment_and_invalid_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".env"
+            self.assertEqual(load_config(path, {}).ollama_hash_cache_ttl_seconds, 86400)
+            path.write_text("OLLAMA_HASH_CACHE_TTL_SECONDS=120\n")
+            self.assertEqual(load_config(path, {}).ollama_hash_cache_ttl_seconds, 120)
+            self.assertEqual(load_config(path, {"OLLAMA_HASH_CACHE_TTL_SECONDS": "0"}).ollama_hash_cache_ttl_seconds, 0)
+            for value in ("-1", "1.5", "bad", ""):
+                with self.subTest(value=value), self.assertRaisesRegex(ValueError, "OLLAMA_HASH_CACHE_TTL_SECONDS"):
+                    load_config(path, {"OLLAMA_HASH_CACHE_TTL_SECONDS": value})
+
     def test_fallback_quantization_default_override_and_invalid(self):
         self.assertEqual(load_config(Path("/nonexistent"), {}).fallback_quantization, "i1-Q4_K_M")
         self.assertEqual(load_config(Path("/nonexistent"), {"FALLBACK_QUANTIZATION": "Q8_0"}).fallback_quantization, "Q8_0")

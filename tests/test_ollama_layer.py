@@ -24,20 +24,40 @@ class OllamaLayerTests(unittest.TestCase):
                 {"mediaType": "application/vnd.ollama.image.model",
                  "digest": "sha256:" + digest, "size": 7}]}))
             cache = {}
-            with patch("local_model_dock.probe_records.time.monotonic", return_value=100), \
-                 patch("local_model_dock.probe_records.hashlib.file_digest", wraps=hashlib.file_digest) as hashing:
-                self.assertEqual(_ollama_layer(root, "model", cache), (digest, 7))
+            with patch("local_model_dock.probe_records.hashlib.file_digest", wraps=hashlib.file_digest) as hashing, \
+                 patch("local_model_dock.probe_records.time.monotonic", return_value=100) as clock:
                 self.assertEqual(_ollama_layer(root, "model", cache), (digest, 7))
                 self.assertEqual(hashing.call_count, 1)
+                self.assertEqual(_ollama_layer(root, "model", cache), (digest, 7))
+                self.assertEqual(hashing.call_count, 1)
+                clock.return_value = 86499
+                self.assertEqual(_ollama_layer(root, "model", cache), (digest, 7))
+                self.assertEqual(hashing.call_count, 1)
+                clock.return_value = 86500
+                self.assertEqual(_ollama_layer(root, "model", cache), (digest, 7))
+                self.assertEqual(hashing.call_count, 2)
                 blob.write_bytes(b"changed")
                 with self.assertRaises(ValueError):
                     _ollama_layer(root, "model", cache)
                 blob.write_bytes(b"weights")
                 self.assertEqual(_ollama_layer(root, "model", cache), (digest, 7))
-            with patch("local_model_dock.probe_records.time.monotonic", return_value=131), \
-                 patch("local_model_dock.probe_records.hashlib.file_digest", wraps=hashlib.file_digest) as hashing:
-                self.assertEqual(_ollama_layer(root, "model", cache), (digest, 7))
+                self.assertEqual(hashing.call_count, 4)
+
+            cache = {}
+            with patch("local_model_dock.probe_records.hashlib.file_digest", wraps=hashlib.file_digest) as hashing, \
+                 patch("local_model_dock.probe_records.time.monotonic", return_value=100) as clock:
+                self.assertEqual(_ollama_layer(root, "model", cache, 5), (digest, 7))
+                clock.return_value = 104
+                self.assertEqual(_ollama_layer(root, "model", cache, 5), (digest, 7))
                 self.assertEqual(hashing.call_count, 1)
+                clock.return_value = 105
+                self.assertEqual(_ollama_layer(root, "model", cache, 5), (digest, 7))
+                self.assertEqual(hashing.call_count, 2)
+            cache = {}
+            with patch("local_model_dock.probe_records.hashlib.file_digest", wraps=hashlib.file_digest) as hashing:
+                _ollama_layer(root, "model", cache, 0)
+                _ollama_layer(root, "model", cache, 0)
+                self.assertEqual(hashing.call_count, 2)
 
     def test_tagged_model_uses_its_own_manifest(self):
         with tempfile.TemporaryDirectory() as directory:

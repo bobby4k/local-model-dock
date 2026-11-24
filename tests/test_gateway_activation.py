@@ -9,6 +9,14 @@ from http.server import ThreadingHTTPServer
 
 
 class ModelStateTests(unittest.TestCase):
+    @patch("local_model_dock.supervisor.check_record", return_value=True)
+    def test_requests_use_configured_cache_ttl(self, check):
+        state = ModelState(object(), hash_cache_ttl=0)
+        self.assertTrue(state.enable("first"))
+        with state.request() as model:
+            self.assertEqual(model, "first")
+        check.assert_called_with(state.backend, "first", state.hash_cache, 0)
+
     @patch("local_model_dock.supervisor.check_record")
     def test_enable_and_revalidate_each_request(self, check):
         state = ModelState(object())
